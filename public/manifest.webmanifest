@@ -1,0 +1,13 @@
+{
+  "id": "./",
+  "name": "SONARIS",
+  "short_name": "SONARIS",
+  "description": "Create. Annotate. Listen. Publish.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c0e12",
+  "theme_color": "#111318"
+}
