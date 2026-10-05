@@ -1,0 +1,139 @@
+name: SONARIS Android -> Google Play
+
+on:
+  push:
+    branches: ["release/play"]
+  workflow_dispatch:
+    inputs:
+      publish_to_play:
+        description: "Publier l'AAB sur Google Play"
+        required: true
+        type: boolean
+        default: false
+      track:
+        description: "Track Google Play"
+        required: true
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+      release_status:
+        description: "Statut de release"
+        required: true
+        type: choice
+        options: [draft, completed]
+        default: draft
+      version_code:
+        description: "Version code Android (vide = 100000 + run_number)"
+        required: false
+        type: string
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install and build PWA
+        run: |
+          npm install
+          npm run build
+          test -f dist/index.html
+          test -f dist/sw.js
+          test -f dist/manifest.webmanifest
+
+      - name: Generate Android project
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Resolve Android version
+        id: version
+        shell: bash
+        run: |
+          INPUT_CODE="${{ github.event.inputs.version_code }}"
+          echo "code=${INPUT_CODE:-$((100000 + GITHUB_RUN_NUMBER))}" >> "$GITHUB_OUTPUT"
+          echo "name=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Android
+        env:
+          ANDROID_VERSION_CODE: ${{ steps.version.outputs.code }}
+          ANDROID_VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: node scripts/configure-android.mjs
+
+      - name: Build debug APK
+        working-directory: android
+        env:
+          ANDROID_VERSION_CODE: ${{ steps.version.outputs.code }}
+          ANDROID_VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonaris-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Restore Play upload key when configured
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Clé Play SONARIS absente : APK debug uniquement."
+            exit 0
+          fi
+          KEYSTORE="$RUNNER_TEMP/sonaris-upload.jks"
+          echo "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed AAB
+        if: steps.signing.outputs.available == 'true'
+        working-directory: android
+        env:
+          ANDROID_VERSION_CODE: ${{ steps.version.outputs.code }}
+          ANDROID_VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: ./gradlew bundleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        if: steps.signing.outputs.available == 'true'
+        with:
+          name: sonaris-play-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Require Play credentials
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_play == 'true'
+        shell: bash
+        env:
+          PLAY_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          test "${{ steps.signing.outputs.available }}" = "true" || { echo "::error::Clé d'upload SONARIS absente"; exit 1; }
+          test -n "$PLAY_JSON" || { echo "::error::GOOGLE_PLAY_SERVICE_ACCOUNT_JSON absent"; exit 1; }
+
+      - name: Upload SONARIS to Google Play
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_play == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: fr.acousmatic.theatre.sonaris
+          releaseFiles: android/app/build/outputs/bundle/release/app-release.aab
+          tracks: ${{ github.event.inputs.track }}
+          status: ${{ github.event.inputs.release_status }}
