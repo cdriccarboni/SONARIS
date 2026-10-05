@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111318">
+  <meta name="description" content="SONARIS — créer, annoter, écouter et publier des expériences audio interactives.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./src/style.css">
+  <title>SONARIS</title>
+</head>
+<body>
+  <header class="top">
+    <div><strong>SONARIS</strong><span>Create. Annotate. Listen. Publish.</span></div>
+    <button id="exportBtn" type="button">Exporter JSON</button>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Projet local · offline-first</p>
+      <h1>Écoute, repère et annote le son.</h1>
+      <p>Premier socle SONARIS 0.1.0 : un projet local, un média audio, des annotations horodatées et un export portable.</p>
+    </section>
+
+    <section class="panel">
+      <label>Nom du projet
+        <input id="projectName" value="Nouveau projet SONARIS" autocomplete="off">
+      </label>
+      <label>Fichier audio local
+        <input id="audioFile" type="file" accept="audio/*">
+      </label>
+      <audio id="player" controls preload="metadata"></audio>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">
+        <h2>Annotations</h2>
+        <button id="markBtn" type="button">+ Marquer maintenant</button>
+      </div>
+      <div class="annotation-form">
+        <input id="noteText" placeholder="Ce que tu entends, observes ou veux retrouver…">
+        <button id="addBtn" type="button">Ajouter</button>
+      </div>
+      <ol id="annotations" class="annotations"></ol>
+      <p id="emptyState" class="muted">Aucune annotation pour l’instant.</p>
+    </section>
+  </main>
+  <footer>SONARIS 0.1.0 · © Cédric Carboni — 2026</footer>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
