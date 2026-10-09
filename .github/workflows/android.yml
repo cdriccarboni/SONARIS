@@ -5,6 +5,14 @@ on:
     branches: ["release/play"]
   workflow_dispatch:
     inputs:
+      approved_sha:
+        description: "Commit Git SHA approuvé (40 caractères)"
+        required: false
+        type: string
+      approved_version:
+        description: "Version Android approuvée"
+        required: false
+        type: string
       publish_to_play:
         description: "Publier l'AAB sur Google Play"
         required: true
@@ -14,7 +22,7 @@ on:
         description: "Track Google Play"
         required: true
         type: choice
-        options: [internal, alpha, beta, production]
+        options: [internal, alpha, beta]
         default: internal
       release_status:
         description: "Statut de release"
@@ -23,9 +31,13 @@ on:
         options: [draft, completed]
         default: draft
       version_code:
-        description: "Version code Android (vide = 100000 + run_number)"
+        description: "VersionCode approuvé obligatoire lors d'un envoi Play (vide = 100000 + run_number pour compilation de test uniquement)"
         required: false
         type: string
+
+concurrency:
+  group: sonaris-android-${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_play && inputs.track || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   android:
@@ -38,6 +50,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Verify exact approval before any Play delivery
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_play }}
+        env:
+          EXPECTED_SHA: ${{ inputs.approved_sha }}
+          EXPECTED_VERSION: ${{ inputs.approved_version }}
+          APPROVED_CODE: ${{ inputs.version_code }}
+          PLAY_TRACK: ${{ inputs.track }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in refs/heads/main|refs/heads/release/play) ;; *) echo "::error::Unauthorized Play branch"; exit 1 ;; esac
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] && [ "$GITHUB_SHA" = "$EXPECTED_SHA" ] || { echo "::error::Approved commit mismatch"; exit 1; }
+          VERSION="$(node -p "require('./package.json').version")"
+          [ -n "$EXPECTED_VERSION" ] && [ "$VERSION" = "$EXPECTED_VERSION" ] || { echo "::error::Approved version mismatch"; exit 1; }
+          [[ "$APPROVED_CODE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Explicit positive versionCode required"; exit 1; }
+          case "$PLAY_TRACK" in internal|alpha|beta) ;; *) echo "::error::Production requires separate protected workflow"; exit 1 ;; esac
+          test -f capacitor.config.json
+          grep -Fq 'fr.acousmatic.theatre.sonaris' capacitor.config.json || { echo "::error::Android package changed"; exit 1; }
+          echo "Play authorization matched SHA=$GITHUB_SHA version=$VERSION code=$APPROVED_CODE track=$PLAY_TRACK"
 
       - uses: actions/setup-java@v4
         with:
@@ -113,11 +145,8 @@ jobs:
           ANDROID_VERSION_NAME: ${{ steps.version.outputs.name }}
         run: ./gradlew bundleRelease --no-daemon
 
-      - uses: actions/upload-artifact@v4
-        if: steps.signing.outputs.available == 'true'
-        with:
-          name: sonaris-play-aab
-          path: android/app/build/outputs/bundle/release/app-release.aab
+      # Signed Play AAB stays on this temporary runner for authorized upload.
+      # Do not expose Play bundles as artifacts from this public repository.
 
       - name: Require Play credentials
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_play == 'true'
